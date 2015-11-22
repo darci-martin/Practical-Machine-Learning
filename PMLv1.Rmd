@@ -1,0 +1,104 @@
+---
+title: "Practical Machine Learning"
+author: "Darci Martin"
+date: "November 21, 2015"
+output: html_document
+---
+
+##Summary
+
+For this analysis we are using data from a control set of subjects asked to perform a weightlifting exercise in one of six different methods (A-E), with classe 'A' being the correct execution of the exercise. Additional information on this research, as well as the original training and testing sets can be found here: [Weight Lifting Exercises Dataset](http://groupware.les.inf.puc-rio.br/har).
+
+We are tasked with building a machine learning algorithm to correctly predict the quality of the exercise from a testing set of activity monitor data.
+
+##Analysis
+
+The training and testing datasets are loaded for analysis.
+
+```{r, results="hide"}
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","WLE Dataset/training.csv")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","WLE Dataset/testing.csv")
+training <- read.csv("WLE Dataset/training.csv",stringsAsFactors=F,na.strings=c('NA','#DIV/0!',''))
+testing <- read.csv("WLE Dataset/testing.csv",stringsAsFactors=F,na.strings=c('NA','#DIV/0!',''))
+```
+
+Packages used for analysis are loaded and I am taking a look at the variables in the training dataset. Since the intent is to see what variables impact the classe variable, I want to see if there are any variables I need to eliminate before I create my model.
+
+```{r, results="hide"}
+library(ggplot2)
+library(caret)
+str(training)
+```
+
+Reviewing the output, I see that I can exclude the first 7 measures as they are details relating to the subjects and the time the test was conducted. I also see that I have several variables that have a large amount of NA's. I want to filter them out, so I create a vector of only the column names I wish to keep for model building. I will reuse this vector to limit my testing sets as well.
+
+```{r, results="hide"}
+filter <- colnames(training[colSums(is.na(training)) < nrow(training) * .8])
+filter <- filter[-c(1:7)]
+```
+
+Last, I am going to split my training data into a testing/training set in order to cross-validate my final model.
+
+```{r, results="hide"}
+set.seed(1982)
+inTrain <- createDataPartition(y=training$classe,p=0.7,list=FALSE)
+tr_set <- training[inTrain,filter]
+xval_set <- training[-inTrain,filter]
+```
+
+Now that I have a set of data for training, I want to look at a plot of the classe to review the distribution.
+
+```{r, echo=FALSE}
+qplot(tr_set$classe, xlab="Classe",ylab="Frequency") + geom_histogram(fill="blue")
+```
+
+My training set appears evenly distributed among the B-E classe types, and have higher than average incidences of A classe types. It does not appear to be excessively skewed, and I know that I have a considerable amount of observations to draw upon for model building.
+
+##Model Selection
+
+I have chosen to use Random Forest with 10-fold cross-validation. This model was selected because of its reference of high accuracy (98.2% weighted average) within the original research experiment.
+
+```{r, results="hide",echo="FALSE"}
+library(plyr)
+library(doMC)
+doMC::registerDoMC(cores=2)
+```
+
+```{r, results="hide"}
+modfit <- train(classe~.,data=tr_set,method="rf",trControl=trainControl(method="cv",number=10), prox=TRUE,allowParallel=TRUE)
+```
+
+```{r,echo=FALSE}
+modfit$finalModel
+```
+
+The model produces a predicted out of sample error of 0.64% which is extremely acceptable. I am going to proceed with testing my cross-validation set.
+
+```{r}
+predfit <- predict(modfit,xval_set)
+conf <- confusionMatrix(predfit,xval_set$classe)
+conf
+```
+
+Based on the confusion matrix, I expect that the out of sample error will be 1-0.9927 = 0.73%
+
+The following plot shows the results of the confusion matrix. Very few predictions fall outside of the reference set.
+
+```{r, echo=FALSE}
+library(reshape2)
+conf_table <- conf$table
+melt_table <- melt(conf_table)
+library(ggplot2)
+ggplot(data=melt_table, aes(x=Prediction,y=Reference,fill=value)) + geom_tile() + geom_text(aes(Prediction,Reference,label=value),color="white")
+```
+
+##Final Submission
+
+Last, I apply my random forest algorithm to the testing set for submission.
+
+```{r, results="hide"}
+names(testing)[160] <- "classe"
+final_set <- testing[,filter]
+answers <- predict(modfit,final_set)
+answers <- as.character(answers)
+```
